@@ -51,6 +51,8 @@ static std::string to_str(seastar::metrics::impl::data_type dt) {
         return "counter";
     case seastar::metrics::impl::data_type::HISTOGRAM:
         return "histogram";
+    case seastar::metrics::impl::data_type::SUMMARY:
+        return "summary";
     }
     return "untyped";
 }
@@ -63,6 +65,7 @@ static std::string to_str(const seastar::metrics::impl::metric_value& v) {
     case seastar::metrics::impl::data_type::COUNTER:
         return std::to_string(v.i());
     case seastar::metrics::impl::data_type::HISTOGRAM:
+    case seastar::metrics::impl::data_type::SUMMARY:
         break;
     }
     return ""; // we should never get here but it makes the compiler happy
@@ -478,14 +481,83 @@ metric_family_range get_range(const metrics_families_per_shard& mf, const sstrin
 
 }
 
+void write_histogram(std::stringstream& s, const config& ctx, const sstring& name, const seastar::metrics::histogram& h, std::map<sstring, sstring> labels) {
+    add_name(s, name + "_sum", labels, ctx);
+    s << h.sample_sum;
+    s << "\n";
+    add_name(s, name + "_count", labels, ctx);
+    s << h.sample_count;
+    s << "\n";
+
+    auto& le = labels["le"];
+    auto bucket = name + "_bucket";
+    for (auto  i : h.buckets) {
+         le = std::to_string(i.upper_bound);
+        add_name(s, bucket, labels, ctx);
+        s << i.count;
+        s << "\n";
+    }
+    labels["le"] = "+Inf";
+    add_name(s, bucket, labels, ctx);
+    s << h.sample_count;
+    s << "\n";
+}
+
+void write_summary(std::stringstream& s, const config& ctx, const sstring& name, const seastar::metrics::histogram& h, std::map<sstring, sstring> labels) {
+    if (h.sample_sum) {
+        add_name(s, name + "_sum", labels, ctx);
+        s << h.sample_sum;
+        s << "\n";
+    }
+    if (h.sample_count) {
+        add_name(s, name + "_count", labels, ctx);
+        s << h.sample_count;
+        s << "\n";
+    }
+    auto& le = labels["quantile"];
+    for (auto  i : h.buckets) {
+        le = std::to_string(i.upper_bound);
+        add_name(s, name, labels, ctx);
+        s << i.count;
+        s << "\n";
+    }
+}
+class histogram_aggregator {
+    std::vector<std::string> _remove_labels;
+    std::unordered_map<std::map<sstring, sstring>, seastar::metrics::histogram> _histograms;
+public:
+    histogram_aggregator(std::vector<std::string>  labels) : _remove_labels(std::move(labels)) {
+    }
+    void add_histogram(const seastar::metrics::histogram& h, std::map<sstring, sstring> labels);
+    const std::unordered_map<std::map<sstring, sstring>, seastar::metrics::histogram>& get_histograms() const {
+        return _histograms;
+    }
+    bool empty() const {
+        return _histograms.empty();
+    }
+};
+
+
+void histogram_aggregator::add_histogram(const seastar::metrics::histogram& h, std::map<sstring, sstring> labels) {
+    for (auto&& l : _remove_labels) {
+        labels.erase(l);
+    }
+    _histograms[labels] += h;
+}
+
 future<> write_text_representation(output_stream<char>& out, const config& ctx, const metric_family_range& m) {
     return seastar::async([&ctx, &out, &m] () mutable {
         bool found = false;
         for (metric_family& metric_family : m) {
             auto name = ctx.prefix + "_" + metric_family.name();
             found = false;
-            metric_family.foreach_metric([&out, &ctx, &found, &name, &metric_family](auto value, auto value_info) mutable {
+            histogram_aggregator histograms(metric_family.metadata().aggregate_labels);
+            bool should_aggregate = !metric_family.metadata().aggregate_labels.empty();
+            metric_family.foreach_metric([&out, &ctx, &found, &name, &metric_family, &histograms, should_aggregate](auto value, auto value_info) mutable {
                 std::stringstream s;
+                if (value.is_empty()) {
+                    return;
+                }
                 if (!found) {
                     if (metric_family.metadata().d.str() != "") {
                         s << "# HELP " << name << " " <<  metric_family.metadata().d.str() << "\n";
@@ -493,28 +565,14 @@ future<> write_text_representation(output_stream<char>& out, const config& ctx, 
                     s << "# TYPE " << name << " " << to_str(metric_family.metadata().type) << "\n";
                     found = true;
                 }
-                if (value.type() == mi::data_type::HISTOGRAM) {
-                    auto&& h = value.get_histogram();
-                    std::map<sstring, sstring> labels = value_info.id.labels();
-                    add_name(s, name + "_sum", labels, ctx);
-                    s << h.sample_sum;
-                    s << "\n";
-                    add_name(s, name + "_count", labels, ctx);
-                    s << h.sample_count;
-                    s << "\n";
-
-                    auto& le = labels["le"];
-                    auto bucket = name + "_bucket";
-                    for (auto  i : h.buckets) {
-                         le = std::to_string(i.upper_bound);
-                        add_name(s, bucket, labels, ctx);
-                        s << i.count;
-                        s << "\n";
+                if (value.type() == mi::data_type::SUMMARY) {
+                    write_summary(s, ctx, name, value.get_histogram(), value_info.id.labels());
+                } else if (value.type() == mi::data_type::HISTOGRAM) {
+                    if (should_aggregate) {
+                        histograms.add_histogram(value.get_histogram(), value_info.id.labels());
+                    } else {
+                        write_histogram(s, ctx, name, value.get_histogram(), value_info.id.labels());
                     }
-                    labels["le"] = "+Inf";
-                    add_name(s, bucket, labels, ctx);
-                    s << h.sample_count;
-                    s << "\n";
                 } else {
                     add_name(s, name, value_info.id.labels(), ctx);
                     std::string value_str;
@@ -535,6 +593,21 @@ future<> write_text_representation(output_stream<char>& out, const config& ctx, 
                 out.write(s.str()).get();
                 thread::maybe_yield();
             });
+            if (!histograms.empty()) {
+                auto name = ctx.prefix + "_" + metric_family.name();
+                std::stringstream name_help;
+                if (metric_family.metadata().d.str() != "") {
+                    name_help << "# HELP " << name << " " <<  metric_family.metadata().d.str() << "\n";
+                }
+                name_help << "# TYPE " << name << " histogram"  << "\n";
+                out.write(name_help.str()).get();
+                for (auto&& h : histograms.get_histograms()) {
+                    std::stringstream s;
+                    write_histogram(s, ctx, name, h.second, h.first);
+                    out.write(s.str()).get();
+                    thread::maybe_yield();
+                }
+            }
         }
     });
 }
