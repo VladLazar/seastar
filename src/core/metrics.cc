@@ -146,9 +146,10 @@ metric_definition_impl::metric_definition_impl(
         metric_type type,
         metric_function f,
         description d,
-        std::vector<label_instance> _labels)
+        std::vector<label_instance> _labels,
+        std::vector<std::string> _aggregate_labels)
         : name(name), type(type), f(f)
-        , d(d), enabled(true) {
+        , d(d), enabled(true), aggregate_labels(std::move(_aggregate_labels)) {
     for (auto i: _labels) {
         labels[i.key()] = i.value();
     }
@@ -172,6 +173,10 @@ metric_definition_impl& metric_definition_impl::set_type(const sstring& type_nam
     return *this;
 }
 
+metric_definition_impl& metric_definition_impl::aggregate(const std::vector<std::string>& _labels) {
+    aggregate_labels = _labels;
+    return *this;
+}
 std::unique_ptr<metric_groups_def> create_metric_groups() {
     return  std::make_unique<metric_groups_impl>();
 }
@@ -186,7 +191,7 @@ metric_groups_impl& metric_groups_impl::add_metric(group_name_type name, const m
 
     metric_id id(name, md._impl->name, md._impl->labels);
 
-    get_local_impl()->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled);
+    get_local_impl()->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled, md._impl->aggregate_labels);
 
     _registration.push_back(id);
     return *this;
@@ -327,7 +332,7 @@ std::vector<std::vector<metric_function>>& impl::functions() {
     return _current_metrics;
 }
 
-void impl::add_registration(const metric_id& id, const metric_type& type, metric_function f, const description& d, bool enabled) {
+void impl::add_registration(const metric_id& id, const metric_type& type, metric_function f, const description& d, bool enabled, const std::vector<std::string>& aggregate_labels) {
     auto rm = ::seastar::make_shared<registered_metric>(id, f, enabled);
     sstring name = id.full_name();
     if (_value_map.find(name) != _value_map.end()) {
@@ -344,6 +349,7 @@ void impl::add_registration(const metric_id& id, const metric_type& type, metric
         _value_map[name].info().d = d;
         _value_map[name].info().inherit_type = type.type_name;
         _value_map[name].info().name = id.full_name();
+        _value_map[name].info().aggregate_labels = aggregate_labels;
         _value_map[name][id.labels()] = rm;
     }
     dirty();
