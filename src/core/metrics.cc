@@ -39,23 +39,23 @@ void metric_groups::clear() {
     _impl = impl::create_metric_groups();
 }
 
-metric_groups::metric_groups(std::initializer_list<metric_group_definition> mg) : _impl(impl::create_metric_groups()) {
+metric_groups::metric_groups(std::initializer_list<metric_group_definition> mg, int handle) : _impl(impl::create_metric_groups()) {
     for (auto&& i : mg) {
-        add_group(i.name, i.metrics);
+        add_group(i.name, i.metrics, handle);
     }
 }
-metric_groups& metric_groups::add_group(const group_name_type& name, const std::initializer_list<metric_definition>& l) {
-    _impl->add_group(name, l);
+metric_groups& metric_groups::add_group(const group_name_type& name, const std::initializer_list<metric_definition>& l, int handle) {
+    _impl->add_group(name, l, handle);
     return *this;
 }
-metric_groups& metric_groups::add_group(const group_name_type& name, const std::vector<metric_definition>& l) {
-    _impl->add_group(name, l);
+metric_groups& metric_groups::add_group(const group_name_type& name, const std::vector<metric_definition>& l, int handle) {
+    _impl->add_group(name, l, handle);
     return *this;
 }
 metric_group::metric_group() noexcept = default;
 metric_group::~metric_group() = default;
-metric_group::metric_group(const group_name_type& name, std::initializer_list<metric_definition> l) {
-    add_group(name, l);
+metric_group::metric_group(const group_name_type& name, std::initializer_list<metric_definition> l, int handle) {
+    add_group(name, l, handle);
 }
 
 metric_group_definition::metric_group_definition(const group_name_type& name, std::initializer_list<metric_definition> l) : name(name), metrics(l) {
@@ -104,11 +104,11 @@ boost::program_options::options_description get_options_description() {
     return opts;
 }
 
-future<> configure(const boost::program_options::variables_map & opts) {
+future<> configure(const boost::program_options::variables_map & opts, int handle) {
     impl::config c;
     c.hostname = opts["metrics-hostname"].as<std::string>();
-    return smp::invoke_on_all([c] {
-        impl::get_local_impl()->set_config(c);
+    return smp::invoke_on_all([c, handle] {
+        impl::get_local_impl(handle)->set_config(c);
     });
 }
 
@@ -121,8 +121,8 @@ bool label_instance::operator!=(const label_instance& id2) const {
 label shard_label("shard");
 namespace impl {
 
-registered_metric::registered_metric(metric_id id, metric_function f, bool enabled) :
-        _f(f), _impl(get_local_impl()) {
+registered_metric::registered_metric(metric_id id, metric_function f, bool enabled, int handle) :
+        _f(f), _impl(get_local_impl(handle)) {
     _info.enabled = enabled;
     _info.id = id;
 }
@@ -185,26 +185,26 @@ metric_groups_impl::~metric_groups_impl() {
     }
 }
 
-metric_groups_impl& metric_groups_impl::add_metric(group_name_type name, const metric_definition& md)  {
+metric_groups_impl& metric_groups_impl::add_metric(group_name_type name, const metric_definition& md, int handle)  {
 
     metric_id id(name, md._impl->name, md._impl->labels);
 
-    get_local_impl()->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled);
+    get_local_impl(handle)->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled);
 
     _registration.push_back(id);
     return *this;
 }
 
-metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::vector<metric_definition>& l) {
+metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::vector<metric_definition>& l, int handle) {
     for (auto i = l.begin(); i != l.end(); ++i) {
-        add_metric(name, *(i->_impl.get()));
+        add_metric(name, *(i->_impl.get()), handle);
     }
     return *this;
 }
 
-metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::initializer_list<metric_definition>& l) {
+metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::initializer_list<metric_definition>& l, int handle) {
     for (auto i = l.begin(); i != l.end(); ++i) {
-        add_metric(name, *i);
+        add_metric(name, *i, handle);
     }
     return *this;
 }
@@ -232,9 +232,24 @@ bool metric_id::operator==(
 // Unfortunately, metrics_impl can not be shared because it
 // need to be available before the first users (reactor) will call it
 
-shared_ptr<impl>  get_local_impl() {
-    static thread_local auto the_impl = ::seastar::make_shared<impl>();
-    return the_impl;
+shared_ptr<impl> get_local_impl(int handle) {
+    static thread_local std::vector<::seastar::shared_ptr<impl>> impls{::seastar::make_shared<impl>(0)};
+    return impls.front();
+
+    // static thread_local auto the_impl = ::seastar::make_shared<impl>(0);
+    // return the_impl;
+
+    // auto impl_iter = std::find_if(impls.begin(), impls.end(), [handle](const auto& crnt) {
+    //     return crnt->get_handle() == handle;
+    // });
+
+    // if (impl_iter == impls.end()) {
+    //     auto ptr = ::seastar::make_shared<impl>(handle);
+    //     impls.push_back(ptr);
+    //     return ptr;
+    // } else {
+    //     return *impl_iter;
+    // }
 }
 void impl::remove_registration(const metric_id& id) {
     auto i = get_value_map().find(id.full_name());
@@ -251,20 +266,20 @@ void impl::remove_registration(const metric_id& id) {
     }
 }
 
-void unregister_metric(const metric_id & id) {
-    get_local_impl()->remove_registration(id);
+void unregister_metric(const metric_id & id, int handle) {
+    get_local_impl(handle)->remove_registration(id);
 }
 
-const value_map& get_value_map() {
-    return get_local_impl()->get_value_map();
+const value_map& get_value_map(int handle) {
+    return get_local_impl(handle)->get_value_map();
 }
 
-foreign_ptr<values_reference> get_values() {
+foreign_ptr<values_reference> get_values(int handle) {
     shared_ptr<values_copy> res_ref = ::seastar::make_shared<values_copy>();
     auto& res = *(res_ref.get());
     auto& mv = res.values;
-    res.metadata = get_local_impl()->metadata();
-    auto & functions = get_local_impl()->functions();
+    res.metadata = get_local_impl(handle)->metadata();
+    auto & functions = get_local_impl(handle)->functions();
     mv.reserve(functions.size());
     for (auto&& i : functions) {
         value_vector values;
@@ -351,6 +366,10 @@ void impl::add_registration(const metric_id& id, const metric_type& type, metric
     }
     dirty();
 }
+
+int default_handle() {
+    return 0;
+} 
 
 }
 

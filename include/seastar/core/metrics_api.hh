@@ -37,6 +37,9 @@ namespace metrics {
 namespace impl {
 
 using labels_type = std::map<sstring, sstring>;
+
+int default_handle();
+
 }
 }
 }
@@ -173,9 +176,9 @@ public:
     ~metric_groups_impl();
     metric_groups_impl(const metric_groups_impl&) = delete;
     metric_groups_impl(metric_groups_impl&&) = default;
-    metric_groups_impl& add_metric(group_name_type name, const metric_definition& md);
-    metric_groups_impl& add_group(group_name_type name, const std::initializer_list<metric_definition>& l);
-    metric_groups_impl& add_group(group_name_type name, const std::vector<metric_definition>& l);
+    metric_groups_impl& add_metric(group_name_type name, const metric_definition& md, int handle = default_handle());
+    metric_groups_impl& add_group(group_name_type name, const std::initializer_list<metric_definition>& l, int handle = default_handle());
+    metric_groups_impl& add_group(group_name_type name, const std::vector<metric_definition>& l, int handle = default_handle());
 };
 
 class impl;
@@ -185,7 +188,7 @@ class registered_metric {
     metric_function _f;
     shared_ptr<impl> _impl;
 public:
-    registered_metric(metric_id id, metric_function f, bool enabled=true);
+    registered_metric(metric_id id, metric_function f, bool enabled=true, int handle=default_handle());
     virtual ~registered_metric() {}
     virtual metric_value operator()() const {
         return _f();
@@ -316,12 +319,15 @@ struct config {
 };
 
 class impl {
+    int _handle;
     value_map _value_map;
     config _config;
     bool _dirty = true;
     shared_ptr<metric_metadata> _metadata;
     std::vector<std::vector<metric_function>> _current_metrics;
 public:
+    explicit impl(int handle) : _handle(handle) {}
+
     value_map& get_value_map() {
         return _value_map;
     }
@@ -342,6 +348,10 @@ public:
         _config = c;
     }
 
+    int get_handle() const {
+        return _handle;
+    }
+
     shared_ptr<metric_metadata> metadata();
 
     std::vector<std::vector<metric_function>>& functions();
@@ -353,14 +363,15 @@ public:
     }
 };
 
-const value_map& get_value_map();
+const value_map& get_value_map(int handle = default_handle());
 using values_reference = shared_ptr<values_copy>;
 
-foreign_ptr<values_reference> get_values();
+foreign_ptr<values_reference> get_values(int handle = default_handle());
 
-shared_ptr<impl> get_local_impl();
+shared_ptr<impl> get_local_impl(int handle = default_handle());
 
-void unregister_metric(const metric_id & id);
+
+void unregister_metric(const metric_id & id, int handle = default_handle());
 
 /*!
  * \brief initialize metric group
@@ -374,7 +385,7 @@ std::unique_ptr<metric_groups_def> create_metric_groups();
 /*!
  * \brief set the metrics configuration
  */
-future<> configure(const boost::program_options::variables_map & opts);
+future<> configure(const boost::program_options::variables_map & opts, int handle = impl::default_handle());
 
 /*!
  * \brief get the metrics configuration desciprtion
