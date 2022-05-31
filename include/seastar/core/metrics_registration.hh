@@ -90,7 +90,7 @@ public:
 class metric_groups {
     std::unique_ptr<impl::metric_groups_def> _impl;
 public:
-    metric_groups() noexcept;
+    metric_groups(int handle = impl::default_handle()) noexcept;
     metric_groups(metric_groups&&) = default;
     virtual ~metric_groups();
     metric_groups& operator=(metric_groups&&) = default;
@@ -121,7 +121,7 @@ public:
      * has no copy constructor, so the other overload (with vector) cannot be
      * invoked on a braced-init-list.
      */
-    metric_groups& add_group(const group_name_type& name, const std::initializer_list<metric_definition>& l, int handle = impl::default_handle());
+    metric_groups& add_group(const group_name_type& name, const std::initializer_list<metric_definition>& l);
 
     /*!
      * \brief Add metrics belonging to the same group.
@@ -139,7 +139,7 @@ public:
      * You can chain add_group calls like:
      * _metrics.add_group("my group1", vec1).add_group("my group2", vec2);
      */
-    metric_groups& add_group(const group_name_type& name, const std::vector<metric_definition>& l, int handle = impl::default_handle());
+    metric_groups& add_group(const group_name_type& name, const std::vector<metric_definition>& l);
 
     /*!
      * \brief clear all metrics groups registrations.
@@ -153,6 +153,7 @@ public:
  * Initialization is done in the constructor or
  * with a call to add_group
  */
+// TODO: add handle
 class metric_group : public metric_groups {
 public:
     metric_group() noexcept;
@@ -166,7 +167,7 @@ public:
      *
      *
      */
-    metric_group(const group_name_type& name, std::initializer_list<metric_definition> l, int handle = impl::default_handle());
+    metric_group(const group_name_type& name, std::initializer_list<metric_definition> l);
 };
 
 

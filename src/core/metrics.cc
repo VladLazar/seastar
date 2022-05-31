@@ -22,40 +22,45 @@
 #include <seastar/core/metrics.hh>
 #include <seastar/core/metrics_api.hh>
 #include <seastar/core/reactor.hh>
+#include <seastar/util/log.hh>
 #include <boost/range/algorithm.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/range/algorithm_ext/erase.hpp>
 
+
 namespace seastar {
 namespace metrics {
 
+static logger mlogger("metrics");
+
+
 double_registration::double_registration(std::string what): std::runtime_error(what) {}
 
-metric_groups::metric_groups() noexcept : _impl(impl::create_metric_groups()) {
+metric_groups::metric_groups(int handle) noexcept : _impl(impl::create_metric_groups(handle)) {
 }
 
 void metric_groups::clear() {
     _impl = impl::create_metric_groups();
 }
 
-metric_groups::metric_groups(std::initializer_list<metric_group_definition> mg, int handle) : _impl(impl::create_metric_groups()) {
+metric_groups::metric_groups(std::initializer_list<metric_group_definition> mg, int handle) : _impl(impl::create_metric_groups(handle)) {
     for (auto&& i : mg) {
-        add_group(i.name, i.metrics, handle);
+        add_group(i.name, i.metrics);
     }
 }
-metric_groups& metric_groups::add_group(const group_name_type& name, const std::initializer_list<metric_definition>& l, int handle) {
-    _impl->add_group(name, l, handle);
+metric_groups& metric_groups::add_group(const group_name_type& name, const std::initializer_list<metric_definition>& l) {
+    _impl->add_group(name, l);
     return *this;
 }
-metric_groups& metric_groups::add_group(const group_name_type& name, const std::vector<metric_definition>& l, int handle) {
-    _impl->add_group(name, l, handle);
+metric_groups& metric_groups::add_group(const group_name_type& name, const std::vector<metric_definition>& l) {
+    _impl->add_group(name, l);
     return *this;
 }
 metric_group::metric_group() noexcept = default;
 metric_group::~metric_group() = default;
-metric_group::metric_group(const group_name_type& name, std::initializer_list<metric_definition> l, int handle) {
-    add_group(name, l, handle);
+metric_group::metric_group(const group_name_type& name, std::initializer_list<metric_definition> l) {
+    add_group(name, l);
 }
 
 metric_group_definition::metric_group_definition(const group_name_type& name, std::initializer_list<metric_definition> l) : name(name), metrics(l) {
@@ -121,8 +126,8 @@ bool label_instance::operator!=(const label_instance& id2) const {
 label shard_label("shard");
 namespace impl {
 
-registered_metric::registered_metric(metric_id id, metric_function f, bool enabled, int handle) :
-        _f(f), _impl(get_local_impl(handle)) {
+registered_metric::registered_metric(metric_id id, metric_function f, bool enabled) :
+        _f(f), _impl(nullptr) {
     _info.enabled = enabled;
     _info.id = id;
 }
@@ -175,36 +180,38 @@ metric_definition_impl& metric_definition_impl::set_type(const sstring& type_nam
     return *this;
 }
 
-std::unique_ptr<metric_groups_def> create_metric_groups() {
-    return  std::make_unique<metric_groups_impl>();
+std::unique_ptr<metric_groups_def> create_metric_groups(int handle) {
+    return  std::make_unique<metric_groups_impl>(handle);
 }
+
+metric_groups_impl::metric_groups_impl(int handle) : _impl(get_local_impl(handle)) {} 
 
 metric_groups_impl::~metric_groups_impl() {
     for (const auto& i : _registration) {
-        unregister_metric(i);
+        _impl->remove_registration(i);
     }
 }
 
-metric_groups_impl& metric_groups_impl::add_metric(group_name_type name, const metric_definition& md, int handle)  {
+metric_groups_impl& metric_groups_impl::add_metric(group_name_type name, const metric_definition& md) {
 
     metric_id id(name, md._impl->name, md._impl->labels);
 
-    get_local_impl(handle)->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled);
+    _impl->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled);
 
     _registration.push_back(id);
     return *this;
 }
 
-metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::vector<metric_definition>& l, int handle) {
+metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::vector<metric_definition>& l) {
     for (auto i = l.begin(); i != l.end(); ++i) {
-        add_metric(name, *(i->_impl.get()), handle);
+        add_metric(name, *(i->_impl.get()));
     }
     return *this;
 }
 
-metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::initializer_list<metric_definition>& l, int handle) {
+metric_groups_impl& metric_groups_impl::add_group(group_name_type name, const std::initializer_list<metric_definition>& l) {
     for (auto i = l.begin(); i != l.end(); ++i) {
-        add_metric(name, *i, handle);
+        add_metric(name, *i);
     }
     return *this;
 }
@@ -233,23 +240,24 @@ bool metric_id::operator==(
 // need to be available before the first users (reactor) will call it
 
 shared_ptr<impl> get_local_impl(int handle) {
-    static thread_local std::vector<::seastar::shared_ptr<impl>> impls{::seastar::make_shared<impl>(0)};
+    static thread_local std::vector<shared_ptr<impl>> impls{make_shared<impl>(0)};
     return impls.front();
 
-    // static thread_local auto the_impl = ::seastar::make_shared<impl>(0);
-    // return the_impl;
+    auto impl_iter = std::find_if(impls.begin(), impls.end(), [handle](const auto& crnt) {
+        return crnt->get_handle() == handle;
+    });
 
-    // auto impl_iter = std::find_if(impls.begin(), impls.end(), [handle](const auto& crnt) {
-    //     return crnt->get_handle() == handle;
-    // });
+    mlogger.info("get_local_impl called handle={} size={} shard={}", handle, impls.size(), shard());
 
-    // if (impl_iter == impls.end()) {
-    //     auto ptr = ::seastar::make_shared<impl>(handle);
-    //     impls.push_back(ptr);
-    //     return ptr;
-    // } else {
-    //     return *impl_iter;
-    // }
+    if (impl_iter == impls.end()) {
+        auto ptr = make_shared<impl>(handle);
+        mlogger.info("get_local_impl created handle={} shard={}", handle, shard());
+        impls.push_back(ptr);
+        return ptr;
+    } else {
+        mlogger.info("get_local_impl found handle={} shard={}", handle, shard());
+        return *impl_iter;
+    }
 }
 void impl::remove_registration(const metric_id& id) {
     auto i = get_value_map().find(id.full_name());

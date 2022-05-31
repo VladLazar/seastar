@@ -166,29 +166,29 @@ struct metric_info {
     bool enabled;
 };
 
+class impl;
 
 using metrics_registration = std::vector<metric_id>;
 
 class metric_groups_impl : public metric_groups_def {
+    shared_ptr<impl> _impl;
     metrics_registration _registration;
 public:
-    metric_groups_impl() = default;
+    metric_groups_impl(int handle);
     ~metric_groups_impl();
     metric_groups_impl(const metric_groups_impl&) = delete;
     metric_groups_impl(metric_groups_impl&&) = default;
-    metric_groups_impl& add_metric(group_name_type name, const metric_definition& md, int handle = default_handle());
-    metric_groups_impl& add_group(group_name_type name, const std::initializer_list<metric_definition>& l, int handle = default_handle());
-    metric_groups_impl& add_group(group_name_type name, const std::vector<metric_definition>& l, int handle = default_handle());
+    metric_groups_impl& add_metric(group_name_type name, const metric_definition& md);
+    metric_groups_impl& add_group(group_name_type name, const std::initializer_list<metric_definition>& l);
+    metric_groups_impl& add_group(group_name_type name, const std::vector<metric_definition>& l);
 };
-
-class impl;
 
 class registered_metric {
     metric_info _info;
     metric_function _f;
     shared_ptr<impl> _impl;
 public:
-    registered_metric(metric_id id, metric_function f, bool enabled=true, int handle=default_handle());
+    registered_metric(metric_id id, metric_function f, bool enabled=true);
     virtual ~registered_metric() {}
     virtual metric_value operator()() const {
         return _f();
@@ -328,6 +328,10 @@ class impl {
 public:
     explicit impl(int handle) : _handle(handle) {}
 
+    int get_handle() const {
+        return _handle;
+    }
+
     value_map& get_value_map() {
         return _value_map;
     }
@@ -346,10 +350,6 @@ public:
     }
     void set_config(const config& c) {
         _config = c;
-    }
-
-    int get_handle() const {
-        return _handle;
     }
 
     shared_ptr<metric_metadata> metadata();
@@ -379,7 +379,7 @@ void unregister_metric(const metric_id & id, int handle = default_handle());
  * Create a metric_group_def.
  * No need to use it directly.
  */
-std::unique_ptr<metric_groups_def> create_metric_groups();
+std::unique_ptr<metric_groups_def> create_metric_groups(int handle = default_handle());
 
 }
 /*!
