@@ -37,6 +37,9 @@ namespace metrics {
 namespace impl {
 
 using labels_type = std::map<sstring, sstring>;
+
+int default_handle();
+
 }
 }
 }
@@ -180,6 +183,8 @@ public:
 };
 
 class impl;
+using metric_implementations = std::vector<::seastar::shared_ptr<impl>>;
+metric_implementations& get_metric_implementations();
 
 class registered_metric {
     metric_info _info;
@@ -317,12 +322,15 @@ struct config {
 };
 
 class impl {
+    int _handle;
     value_map _value_map;
     config _config;
     bool _dirty = true;
     shared_ptr<metric_metadata> _metadata;
     std::vector<std::vector<metric_function>> _current_metrics;
 public:
+    explicit impl(int handle) : _handle(handle) {}
+
     value_map& get_value_map() {
         return _value_map;
     }
@@ -343,6 +351,10 @@ public:
         _config = c;
     }
 
+    int get_handle() const {
+        return _handle;
+    }
+
     shared_ptr<metric_metadata> metadata();
 
     std::vector<std::vector<metric_function>>& functions();
@@ -359,7 +371,7 @@ using values_reference = shared_ptr<values_copy>;
 
 foreign_ptr<values_reference> get_values();
 
-shared_ptr<impl> get_local_impl();
+shared_ptr<impl> get_local_impl(int handle = default_handle());
 
 void unregister_metric(const metric_id & id);
 
