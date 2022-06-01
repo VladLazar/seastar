@@ -177,9 +177,9 @@ public:
     ~metric_groups_impl();
     metric_groups_impl(const metric_groups_impl&) = delete;
     metric_groups_impl(metric_groups_impl&&) = default;
-    metric_groups_impl& add_metric(group_name_type name, const metric_definition& md);
-    metric_groups_impl& add_group(group_name_type name, const std::initializer_list<metric_definition>& l);
-    metric_groups_impl& add_group(group_name_type name, const std::vector<metric_definition>& l);
+    metric_groups_impl& add_metric(group_name_type name, const metric_definition& md, int handle = default_handle());
+    metric_groups_impl& add_group(group_name_type name, const std::initializer_list<metric_definition>& l, int handle = default_handle());
+    metric_groups_impl& add_group(group_name_type name, const std::vector<metric_definition>& l, int handle = default_handle());
 };
 
 class impl;
@@ -399,7 +399,7 @@ struct options : public program_options::option_group {
 /*!
  * \brief set the metrics configuration
  */
-future<> configure(const options& opts);
+future<> configure(const options& opts, int handle = impl::default_handle());
 
 }
 }
