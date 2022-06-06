@@ -575,8 +575,8 @@ impl::metric_definition_impl make_absolute(metric_name_type name,
  */
 template<typename T>
 impl::metric_definition_impl make_histogram(metric_name_type name,
-        T&& val, description d=description(), std::vector<label_instance> labels = {}) {
-    return  {name, {impl::data_type::HISTOGRAM, "histogram"}, make_function(std::forward<T>(val), impl::data_type::HISTOGRAM), d, labels};
+        T&& val, description d=description(), std::vector<label_instance> labels = {}, std::vector<std::string> aggregate_labels = {}) {
+    return  {name, {impl::data_type::HISTOGRAM, "histogram"}, make_function(std::forward<T>(val), impl::data_type::HISTOGRAM), d, std::move(labels), std::move(aggregate_labels)};
 }
 
 /*!
@@ -587,8 +587,8 @@ impl::metric_definition_impl make_histogram(metric_name_type name,
  */
 template<typename T>
 impl::metric_definition_impl make_histogram(metric_name_type name,
-        description d, std::vector<label_instance> labels, T&& val) {
-    return  {name, {impl::data_type::HISTOGRAM, "histogram"}, make_function(std::forward<T>(val), impl::data_type::HISTOGRAM), d, labels};
+        description d, std::vector<label_instance> labels, T&& val, std::vector<std::string> aggregate_labels = {}) {
+    return  {name, {impl::data_type::HISTOGRAM, "histogram"}, make_function(std::forward<T>(val), impl::data_type::HISTOGRAM), d, std::move(labels), std::move(aggregate_labels)};
 }
 
 
