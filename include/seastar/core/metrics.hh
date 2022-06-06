@@ -435,8 +435,8 @@ extern label shard_label;
  */
 template<typename T>
 impl::metric_definition_impl make_gauge(metric_name_type name,
-        T&& val, description d=description(), std::vector<label_instance> labels = {}) {
-    return {name, {impl::data_type::GAUGE, "gauge"}, make_function(std::forward<T>(val), impl::data_type::GAUGE), d, labels};
+        T&& val, description d=description(), std::vector<label_instance> labels = {}, std::vector<std::string> aggregate_labels = {}) {
+    return {name, {impl::data_type::GAUGE, "gauge"}, make_function(std::forward<T>(val), impl::data_type::GAUGE), d, std::move(labels), std::move(aggregate_labels)};
 }
 
 /*!
@@ -521,9 +521,9 @@ impl::metric_definition_impl make_derive(metric_name_type name, description d, s
  */
 template<typename T>
 impl::metric_definition_impl make_counter(metric_name_type name,
-        T&& val, description d=description(), std::vector<label_instance> labels = {}) {
+        T&& val, description d=description(), std::vector<label_instance> labels = {}, std::vector<std::string> aggregate_labels = {}) {
     auto type = impl::counter_type_traits<std::remove_reference_t<T>>::type;
-    return {name, {type, "counter"}, make_function(std::forward<T>(val), type), d, labels};
+    return {name, {type, "counter"}, make_function(std::forward<T>(val), type), d, std::move(labels), std::move(aggregate_labels)};
 }
 
 /*!
@@ -627,8 +627,8 @@ impl::metric_definition_impl make_summary(metric_name_type name,
 template<typename T>
 impl::metric_definition_impl make_total_bytes(metric_name_type name,
         T&& val, description d=description(), std::vector<label_instance> labels = {},
-        instance_id_type instance = impl::shard()) {
-    return make_counter(name, std::forward<T>(val), d, labels).set_type("total_bytes");
+        instance_id_type instance = impl::shard(), std::vector<std::string> aggregate_labels = {}) {
+    return make_counter(name, std::forward<T>(val), d, std::move(labels), std::move(aggregate_labels)).set_type("total_bytes");
 }
 
 /*!
@@ -641,8 +641,8 @@ impl::metric_definition_impl make_total_bytes(metric_name_type name,
 template<typename T>
 impl::metric_definition_impl make_current_bytes(metric_name_type name,
         T&& val, description d=description(), std::vector<label_instance> labels = {},
-        instance_id_type instance = impl::shard()) {
-    return make_gauge(name, std::forward<T>(val), d, labels).set_type("bytes");
+        instance_id_type instance = impl::shard(), std::vector<std::string> aggregate_labels = {}) {
+    return make_gauge(name, std::forward<T>(val), d, std::move(labels), std::move(aggregate_labels)).set_type("bytes");
 }
 
 
