@@ -712,14 +712,14 @@ public:
 
 
 
-future<> add_prometheus_routes(http_server& server, config ctx, sstring route) {
-    server._routes.put(GET, route, new metrics_handler(ctx));
+future<> add_prometheus_routes(http_server& server, config ctx) {
+    server._routes.put(GET, ctx.route, new metrics_handler(ctx));
     return make_ready_future<>();
 }
 
-future<> add_prometheus_routes(distributed<http_server>& server, config ctx, sstring route) {
-    return server.invoke_on_all([ctx, route](http_server& s) {
-        return add_prometheus_routes(s, ctx, route);
+future<> add_prometheus_routes(distributed<http_server>& server, config ctx) {
+    return server.invoke_on_all([ctx](http_server& s) {
+        return add_prometheus_routes(s, ctx);
     });
 }
 
