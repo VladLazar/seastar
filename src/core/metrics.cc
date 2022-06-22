@@ -118,8 +118,8 @@ bool label_instance::operator!=(const label_instance& id2) const {
 label shard_label("shard");
 namespace impl {
 
-registered_metric::registered_metric(metric_id id, metric_function f, bool enabled) :
-        _f(f), _impl(get_local_impl()) {
+registered_metric::registered_metric(metric_id id, metric_function f, bool enabled, int handle) :
+        _f(f), _impl(get_local_impl(handle)) {
     _info.enabled = enabled;
     _info.id = id;
 }
@@ -172,13 +172,15 @@ metric_definition_impl& metric_definition_impl::set_type(const sstring& type_nam
     return *this;
 }
 
-std::unique_ptr<metric_groups_def> create_metric_groups() {
-    return  std::make_unique<metric_groups_impl>();
+std::unique_ptr<metric_groups_def> create_metric_groups(int handle) {
+    return  std::make_unique<metric_groups_impl>(handle);
 }
+
+metric_groups_impl::metric_groups_impl(int handle) : _handle(handle) {}
 
 metric_groups_impl::~metric_groups_impl() {
     for (const auto& i : _registration) {
-        unregister_metric(i);
+        unregister_metric(i, _handle);
     }
 }
 
@@ -186,7 +188,7 @@ metric_groups_impl& metric_groups_impl::add_metric(group_name_type name, const m
 
     metric_id id(name, md._impl->name, md._impl->labels);
 
-    get_local_impl()->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled);
+    get_local_impl(_handle)->add_registration(id, md._impl->type, md._impl->f, md._impl->d, md._impl->enabled, _handle);
 
     _registration.push_back(id);
     return *this;
@@ -252,20 +254,20 @@ void impl::remove_registration(const metric_id& id) {
     }
 }
 
-void unregister_metric(const metric_id & id) {
-    get_local_impl()->remove_registration(id);
+void unregister_metric(const metric_id & id, int handle) {
+    get_local_impl(handle)->remove_registration(id);
 }
 
-const value_map& get_value_map() {
-    return get_local_impl()->get_value_map();
+const value_map& get_value_map(int handle) {
+    return get_local_impl(handle)->get_value_map();
 }
 
-foreign_ptr<values_reference> get_values() {
+foreign_ptr<values_reference> get_values(int handle) {
     shared_ptr<values_copy> res_ref = ::seastar::make_shared<values_copy>();
     auto& res = *(res_ref.get());
     auto& mv = res.values;
-    res.metadata = get_local_impl()->metadata();
-    auto & functions = get_local_impl()->functions();
+    res.metadata = get_local_impl(handle)->metadata();
+    auto & functions = get_local_impl(handle)->functions();
     mv.reserve(functions.size());
     for (auto&& i : functions) {
         value_vector values;
@@ -331,8 +333,8 @@ std::vector<std::vector<metric_function>>& impl::functions() {
     return _current_metrics;
 }
 
-void impl::add_registration(const metric_id& id, const metric_type& type, metric_function f, const description& d, bool enabled) {
-    auto rm = ::seastar::make_shared<registered_metric>(id, f, enabled);
+void impl::add_registration(const metric_id& id, const metric_type& type, metric_function f, const description& d, bool enabled, int handle) {
+    auto rm = ::seastar::make_shared<registered_metric>(id, f, enabled, handle);
     sstring name = id.full_name();
     if (_value_map.find(name) != _value_map.end()) {
         auto& metric = _value_map[name];
