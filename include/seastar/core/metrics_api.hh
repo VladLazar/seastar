@@ -392,7 +392,7 @@ struct options : public program_options::option_group {
 /*!
  * \brief set the metrics configuration
  */
-future<> configure(const options& opts, int handle = default_handle());
+future<> configure(const options& opts, int handle = impl::default_handle());
 
 }
 }
