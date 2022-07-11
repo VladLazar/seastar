@@ -336,6 +336,7 @@ class impl {
     bool _dirty = true;
     shared_ptr<metric_metadata> _metadata;
     std::vector<std::vector<metric_function>> _current_metrics;
+    std::unordered_map<seastar::sstring, int> _metric_families_to_replicate;
 public:
     value_map& get_value_map() {
         return _value_map;
@@ -366,6 +367,31 @@ public:
     void dirty() {
         _dirty = true;
     }
+
+
+    // Set the metrics families to be replicated from this metrics::impl.
+    // All metrics families that match one of the 'full_name' fields
+    // in the 'metric_families_to_replicate' argument will be replicated
+    // on the metrics::impl identified by the 'destination_handle'.
+    //
+    // If this function was called previously, any replicated metric
+    // families that don't match any of the specifications provided
+    // will be removed.
+    //
+    // Metric replication spans the full life cycle of this class.
+    // Newly registered metrics that belong to a replicated family
+    // be replicated too and unregistering a replicated metric will
+    // unregister the replica.
+    void set_metric_families_to_replicate(
+            std::unordered_map<seastar::sstring, int> metric_families_to_replicate);
+
+private:
+    void replicate_metric_family(const seastar::sstring& name, int destination) const;
+    void replicate_metric_if_required(const shared_ptr<registered_metric>& metric) const;
+    void replicate_metric(const shared_ptr<registered_metric>& metric,
+                          const metric_family& family,
+                          int destination) const;
+
 };
 
 const value_map& get_value_map(int handle = default_handle());

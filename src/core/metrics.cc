@@ -310,6 +310,72 @@ instance_id_type shard() {
     return sstring("0");
 }
 
+void
+impl::set_metric_families_to_replicate(
+        std::unordered_map<seastar::sstring, int> metric_families_to_replicate) {
+    // Remove replicas for all metric families that are not
+    // present in the new map.
+    for (const auto& [name, destination]: _metric_families_to_replicate) {
+        if (!metric_families_to_replicate.contains(name)) {
+            remove_metric_replica_family(name, destination);
+        }
+    }
+
+    // Replicate the specified metric families, skipping the ones that
+    // already have replicas.
+    for (const auto& [name, destination]: metric_families_to_replicate) {
+        if (!_metric_families_to_replicate.contains(name)) {
+            replicate_metric_family(name, destination);
+        }
+    }
+
+    _metric_families_to_replicate = std::move(metric_families_to_replicate);
+}
+
+void impl::replicate_metric_family(const seastar::sstring& name, int destination) const {
+    const auto& entry = _value_map.find(name);
+
+    if (entry == _value_map.end()) {
+        return;
+    }
+
+    const auto& metric_family = entry->second;
+    for (const auto& [labels, metric_ptr]: metric_family) {
+        replicate_metric(metric_ptr, metric_family, destination);
+    }
+}
+
+void impl::replicate_metric_if_required(const shared_ptr<registered_metric>& metric) const {
+    auto full_name = metric->get_id().full_name();
+    auto matching_spec = _metric_families_to_replicate.find(full_name);
+
+    if (matching_spec != _metric_families_to_replicate.end()) {
+        const auto& metric_family = _value_map.at(full_name);
+
+        auto destination = matching_spec->second;
+        replicate_metric(metric, metric_family, destination);
+    }
+}
+
+void impl::replicate_metric(const shared_ptr<registered_metric>& metric,
+                            const metric_family& family,
+                            int destination) const {
+    auto destination_impl = get_local_impl(destination);
+
+    const auto& family_info = family.info();
+    metric_type type = { .base_type = family_info.type,
+                         .type_name = family_info.inherit_type };
+
+    destination_impl->add_registration(metric->get_id(),
+                                       type,
+                                       metric->get_function(),
+                                       family_info.d,
+                                       metric->is_enabled(),
+                                       metric->get_skip_when_empty(),
+                                       family_info.aggregate_labels,
+                                       destination);
+}
+
 void impl::update_metrics_if_needed() {
     if (_dirty) {
         // Forcing the metadata to an empty initialization
