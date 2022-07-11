@@ -258,6 +258,8 @@ shared_ptr<impl> get_local_impl(int handle) {
 }
 
 void impl::remove_registration(const metric_id& id) {
+    remove_metric_replica_if_required(id);
+
     auto i = get_value_map().find(id.full_name());
     if (i != get_value_map().end()) {
         auto j = i->second.find(id.labels());
@@ -469,6 +471,8 @@ void impl::add_registration(const metric_id& id, const metric_type& type, metric
         _value_map[name][id.labels()] = rm;
     }
     dirty();
+
+    replicate_metric_if_required(rm);
 }
 
 int default_handle() {
