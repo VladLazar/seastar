@@ -370,9 +370,9 @@ public:
 
 
     // Set the metrics families to be replicated from this metrics::impl.
-    // All metrics families that match one of the 'full_name' fields
-    // in the 'metric_families_to_replicate' argument will be replicated
-    // on the metrics::impl identified by the 'destination_handle'.
+    // All metrics families that match one of the keys of
+    // the 'metric_families_to_replicate' argument will be replicated
+    // on the metrics::impl identified by the corresponding value.
     //
     // If this function was called previously, any replicated metric
     // families that don't match any of the specifications provided
@@ -435,6 +435,13 @@ struct options : public program_options::option_group {
  * \brief set the metrics configuration
  */
 future<> configure(const options& opts, int handle = default_handle());
+
+
+/*!
+ * \brief replicate metric families accross internal metrics implementations
+ */
+future<>
+replicate_metric_families(int source_handle, std::unordered_multimap<seastar::sstring, int> metric_families_to_replicate);
 
 }
 }
