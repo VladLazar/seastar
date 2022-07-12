@@ -115,7 +115,7 @@ future<> configure(const options& opts, int handle) {
 future<>
 replicate_metric_families(
         int source_handle,
-        std::unordered_map<seastar::sstring, int> metric_families_to_replicate) {
+        std::unordered_multimap<seastar::sstring, int> metric_families_to_replicate) {
     return smp::invoke_on_all([source_handle, metric_families_to_replicate] {
         auto source_impl = impl::get_local_impl(source_handle);
         source_impl->set_metric_families_to_replicate(
@@ -305,10 +305,10 @@ void impl::remove_metric_replica(const metric_id& id, int destination) const {
 }
 
 void impl::remove_metric_replica_if_required(const metric_id& id) const {
-    auto matching_spec = _metric_families_to_replicate.find(id.full_name());
+    auto [begin, end] = _metric_families_to_replicate.equal_range(id.full_name());
 
-    if (matching_spec != _metric_families_to_replicate.end()) {
-        auto destination = matching_spec->second;
+    for (; begin != end; ++begin) {
+        auto destination = begin->second;
         remove_metric_replica(id, destination);
     }
 }
@@ -353,21 +353,15 @@ instance_id_type shard() {
 
 void
 impl::set_metric_families_to_replicate(
-        std::unordered_map<seastar::sstring, int> metric_families_to_replicate) {
-    // Remove replicas for all metric families that are not
-    // present in the new map.
+        std::unordered_multimap<seastar::sstring, int> metric_families_to_replicate) {
+    // Remove all previous metric replica families
     for (const auto& [name, destination]: _metric_families_to_replicate) {
-        if (!metric_families_to_replicate.contains(name)) {
-            remove_metric_replica_family(name, destination);
-        }
+        remove_metric_replica_family(name, destination);
     }
 
-    // Replicate the specified metric families, skipping the ones that
-    // already have replicas.
+    // Replicate the specified metric families.
     for (const auto& [name, destination]: metric_families_to_replicate) {
-        if (!_metric_families_to_replicate.contains(name)) {
-            replicate_metric_family(name, destination);
-        }
+        replicate_metric_family(name, destination);
     }
 
     _metric_families_to_replicate = std::move(metric_families_to_replicate);
@@ -388,12 +382,12 @@ void impl::replicate_metric_family(const seastar::sstring& name, int destination
 
 void impl::replicate_metric_if_required(const shared_ptr<registered_metric>& metric) const {
     auto full_name = metric->get_id().full_name();
-    auto matching_spec = _metric_families_to_replicate.find(full_name);
+    auto [begin, end]= _metric_families_to_replicate.equal_range(full_name);
 
-    if (matching_spec != _metric_families_to_replicate.end()) {
-        const auto& metric_family = _value_map.at(full_name);
+    for (; begin != end; ++begin) {
+        const auto& [name, destination] = *begin;
+        const auto& metric_family = _value_map.at(name);
 
-        auto destination = matching_spec->second;
         replicate_metric(metric, metric_family, destination);
     }
 }
